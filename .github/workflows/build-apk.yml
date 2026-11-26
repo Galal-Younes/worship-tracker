@@ -18,6 +18,15 @@ jobs:
         run: flutter create --platforms=android --org com.galal --project-name worship_tracker .
       - name: Set app name
         run: sed -i 's/android:label="[^"]*"/android:label="متتبع العبادة"/' android/app/src/main/AndroidManifest.xml
+      - name: Apply app icon
+        run: |
+          sudo apt-get install -y libcairo2
+          pip install --break-system-packages cairosvg
+          python3 - <<'EOF'
+          import cairosvg
+          for d, p in [('mdpi', 48), ('hdpi', 72), ('xhdpi', 96), ('xxhdpi', 144), ('xxxhdpi', 192)]:
+              cairosvg.svg2png(url='assets/icon.svg', write_to='android/app/src/main/res/mipmap-%s/ic_launcher.png' % d, output_width=p, output_height=p)
+          EOF
       - run: flutter pub get
       - run: flutter build apk --release
       - uses: actions/upload-artifact@v4
