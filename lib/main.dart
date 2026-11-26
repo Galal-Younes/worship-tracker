@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const prayers = {
@@ -74,6 +76,33 @@ class _HomeState extends State<Home> {
     return p.values.where((v) => v == 1 || v == 2).length;
   }
 
+  List<String> get sunnahs =>
+      widget.prefs.getStringList('sn') ??
+      ['سنن الرواتب', 'الوتر', 'الضحى', 'أذكار الصباح', 'أذكار المساء', 'أذكار النوم'];
+
+  int scount(String k) {
+    final s = Map<String, dynamic>.from(day(k)['s'] ?? {});
+    return sunnahs.where((x) => s[x] == true).length;
+  }
+
+  Future<void> addSunnah() async {
+    final c = TextEditingController();
+    final t = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('سنة / ذكر جديد'),
+        content: TextField(controller: c, autofocus: true),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, c.text.trim()), child: const Text('إضافة'))
+        ],
+      ),
+    );
+    if (t != null && t.isNotEmpty && !sunnahs.contains(t)) {
+      await widget.prefs.setStringList('sn', [...sunnahs, t]);
+      setState(() {});
+    }
+  }
+
   int pages(String k) => (day(k)['q'] ?? 0) as int;
   bool qiyam(String k) => day(k)['qi'] == true;
 
@@ -100,7 +129,7 @@ class _HomeState extends State<Home> {
 
   @override
   Widget build(BuildContext context) {
-    final pages_ = [today(), calendar(), stats()];
+    final pages_ = [today(), calendar(), stats(), more()];
     return Scaffold(
       appBar: AppBar(title: const Text('متتبع العبادة والحياة')),
       body: SafeArea(child: pages_[tab]),
@@ -111,6 +140,7 @@ class _HomeState extends State<Home> {
           NavigationDestination(icon: Icon(Icons.today), label: 'اليوم'),
           NavigationDestination(icon: Icon(Icons.calendar_month), label: 'التقويم'),
           NavigationDestination(icon: Icon(Icons.bar_chart), label: 'الإحصاءات'),
+          NavigationDestination(icon: Icon(Icons.more_horiz), label: 'المزيد'),
         ],
       ),
     );
@@ -203,6 +233,31 @@ class _HomeState extends State<Home> {
         ),
       ),
       Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('السنن والأذكار ${scount(k)}/${sunnahs.length}',
+                  style: Theme.of(context).textTheme.titleMedium),
+              IconButton(icon: const Icon(Icons.add), onPressed: addSunnah),
+            ]),
+            for (final s in sunnahs)
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(s),
+                value: (d['s'] ?? {})[s] == true,
+                onChanged: (v) {
+                  final nd = day(k);
+                  final ns = Map<String, dynamic>.from(nd['s'] ?? {});
+                  ns[s] = v == true;
+                  nd['s'] = ns;
+                  put(k, nd);
+                },
+              ),
+          ]),
+        ),
+      ),
+      Card(
         child: SwitchListTile(
           title: const Text('قيام الليل'),
           value: qiyam(k),
@@ -282,6 +337,222 @@ class _HomeState extends State<Home> {
             style: const TextStyle(fontWeight: FontWeight.bold)),
         IconButton(
             icon: const Icon(Icons.chevron_left),
+            onPressed: () => setState(() => month = DateTime(month.year, month.month + 1))),
+      ]),
+      GridView.count(
+        crossAxisCount: 7,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        children: cells,
+      ),
+      const Padding(
+        padding: EdgeInsets.all(8),
+        child: Text('اضغط على أي يوم لفتح سجله. اللون الأغمق = التزام أكبر.'),
+      ),
+    ]);
+  }
+
+  int sub = 0;
+
+  List get habits => jsonDecode(widget.prefs.getString('hb') ?? '[]');
+
+  void saveHabits(List h) {
+    widget.prefs.setString('hb', jsonEncode(h));
+    setState(() {});
+  }
+
+  void toast(String t) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
+
+  Future<List<String>?> form(String title, List<String> labels) {
+    final cs = [for (final _ in labels) TextEditingController()];
+    return showDialog<List<String>>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            for (var i = 0; i < labels.length; i++)
+              TextField(controller: cs[i], decoration: InputDecoration(labelText: labels[i])),
+          ]),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, [for (final c in cs) c.text.trim()]),
+              child: const Text('حفظ'))
+        ],
+      ),
+    );
+  }
+
+  Future<String?> pickTime() async {
+    final t = await showTimePicker(context: context, initialTime: TimeOfDay.now());
+    if (t == null) return null;
+    return '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+  }
+
+  int mins(String s) {
+    final p = s.split(':');
+    return int.parse(p[0]) * 60 + int.parse(p[1]);
+  }
+
+  List<Map<String, dynamic>> items(String k, String f) => List<Map<String, dynamic>>.from(
+      (day(k)[f] ?? []).map((e) => Map<String, dynamic>.from(e)));
+
+  void setItems(String k, String f, List l) {
+    final nd = day(k);
+    nd[f] = l;
+    put(k, nd);
+  }
+
+  Widget dateBar() => Card(
+        child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          IconButton(
+              icon: const Icon(Icons.chevron_right),
+              onPressed: () => setState(() => sel = sel.subtract(const Duration(days: 1)))),
+          Text('${dayNames[sel.weekday - 1]}  ${keyOf(sel)}',
+              style: const TextStyle(fontWeight: FontWeight.bold)),
+          IconButton(
+              icon: const Icon(Icons.chevron_left),
+              onPressed: () => setState(() => sel = sel.add(const Duration(days: 1)))),
+        ]),
+      );
+
+  Widget more() {
+    final k = keyOf(sel);
+    const names = ['مذاكرة', 'نوم', 'تمارين', 'عادات', 'نسخ احتياطي'];
+    final body = [studyView(k), sleepView(k), workoutView(k), habitsView(), backupView()][sub];
+    return ListView(padding: const EdgeInsets.all(12), children: [
+      Wrap(spacing: 8, children: [
+        for (var i = 0; i < names.length; i++)
+          ChoiceChip(
+              label: Text(names[i]), selected: sub == i, onSelected: (_) => setState(() => sub = i)),
+      ]),
+      if (sub < 3) dateBar(),
+      ...body,
+    ]);
+  }
+
+  List<Widget> studyView(String k) {
+    final list = items(k, 'st');
+    final m = lastDays(30), w = lastDays(7);
+    int tot(List<String> ks) =>
+        ks.fold(0, (a, x) => a + items(x, 'st').fold(0, (b, s) => b + (s['min'] as int)));
+    final sj = <String, double>{};
+    for (final x in m) {
+      for (final s in items(x, 'st')) {
+        sj[s['sub'] as String] = (sj[s['sub'] as String] ?? 0.0) + (s['min'] as int);
+      }
+    }
+    final t = sj.values.fold(0.0, (a, b) => a + b);
+    return [
+      box(
+        'جلسات المذاكرة',
+        Column(children: [
+          for (var i = 0; i < list.length; i++)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('${list[i]['sub']} — ${list[i]['min']} د'),
+              trailing: IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    list.removeAt(i);
+                    setItems(k, 'st', list);
+                  }),
+            ),
+          FilledButton.icon(
+            icon: const Icon(Icons.add),
+            label: const Text('إضافة جلسة'),
+            onPressed: () async {
+              final r = await form('جلسة مذاكرة', ['المادة', 'المدة بالدقائق']);
+              final mm = r == null ? null : int.tryParse(r[1]);
+              if (r == null || r[0].isEmpty || mm == null) return;
+              list.add({'sub': r[0], 'min': mm});
+              setItems(k, 'st', list);
+            },
+          ),
+        ]),
+      ),
+      box(
+        'الساعات',
+        Text(
+            'اليوم ${(tot([k]) / 60).toStringAsFixed(1)} · الأسبوع ${(tot(w) / 60).toStringAsFixed(1)} · الشهر ${(tot(m) / 60).toStringAsFixed(1)}'),
+      ),
+      if (t > 0)
+        box('توزيع المواد (30 يوم)', bars({for (final e in sj.entries) e.key: e.value / t * 100})),
+    ];
+  }
+
+  void saveSleep(String k, {String? f, String? t, int? q}) {
+    final nd = day(k);
+    final sl = Map<String, dynamic>.from(nd['sl'] ?? {});
+    if (f != null) sl['f'] = f;
+    if (t != null) sl['t'] = t;
+    if (q != null) sl['q'] = q;
+    if (sl['f'] != null && sl['t'] != null) {
+      sl['h'] = ((mins(sl['t']) - mins(sl['f']) + 1440) % 1440) / 60;
+    }
+    nd['sl'] = sl;
+    put(k, nd);
+  }
+
+  List<Widget> sleepView(String k) {
+    final sl = Map<String, dynamic>.from(day(k)['sl'] ?? {});
+    final w = lastDays(7).reversed.toList();
+    double hrs(String x) => ((day(x)['sl'] ?? {})['h'] ?? 0).toDouble();
+    final withData = lastDays(30).where((x) => hrs(x) > 0).toList();
+    final avg =
+        withData.isEmpty ? 0.0 : withData.fold(0.0, (a, x) => a + hrs(x)) / withData.length;
+    return [
+      box(
+        'نوم الليلة المنتهية في هذا اليوم',
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('نمت: ${sl['f'] ?? '—'}   ·   صحيت: ${sl['t'] ?? '—'}'),
+          if (sl['h'] != null) Text('المدة: ${(sl['h'] as num).toStringAsFixed(1)} ساعة'),
+          const SizedBox(height: 8),
+          Wrap(spacing: 8, children: [
+            OutlinedButton(
+                onPressed: () async {
+                  final t = await pickTime();
+                  if (t != null) saveSleep(k, f: t);
+                },
+                child: const Text('وقت النوم')),
+            OutlinedButton(
+                onPressed: () async {
+                  final t = await pickTime();
+                  if (t != null) saveSleep(k, t: t);
+                },
+                child: const Text('وقت الاستيقاظ')),
+          ]),
+          const SizedBox(height: 8),
+          Wrap(spacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+            const Text('الجودة:'),
+            for (var q = 1; q <= 5; q++)
+              ChoiceChip(
+                  label: Text('$q'), selected: sl['q'] == q, onSelected: (_) => saveSleep(k, q: q)),
+          ]),
+        ]),
+      ),
+      box(
+        'آخر 7 أيام (ساعات) — المتوسط ${avg.toStringAsFixed(1)} (الأخضر = 7 إلى 9)',
+        SizedBox(
+          height: 110,
+          child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            for (final x in w)
+              Expanded(
+                child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
+                  Text(hrs(x) > 0 ? hrs(x).toStringAsFixed(1) : '-',
+                      style: const TextStyle(fontSize: 10)),
+                  Container(
+                    height: hrs(x) / 12 * 70,
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    decoration: BoxDecoration(
+                      color: hrs(x) >= 7 && hrs(x) <= 9 ? Colors.green : Colors.orange,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ]),
+ .chevron_left),
             onPressed: () => setState(() => month = DateTime(month.year, month.month + 1))),
       ]),
       GridView.count(
