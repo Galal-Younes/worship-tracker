@@ -1,4 +1,4 @@
-
+ 
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -553,4 +553,346 @@ class _HomeState extends State<Home> {
                     ),
                   ),
                 ]),
- 
+              ),
+          ]),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> workoutView(String k) {
+    final list = items(k, 'wo');
+    int days(int n) => lastDays(n).where((x) => items(x, 'wo').isNotEmpty).length;
+    return [
+      box(
+        'تمارين اليوم',
+        Column(children: [
+          for (var i = 0; i < list.length; i++)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('${list[i]['n']} (${list[i]['m']})'),
+              subtitle: Text(
+                  '${list[i]['s']}×${list[i]['r']} · ${list[i]['w']} كجم · ${list[i]['d']} د'),
+              trailing: IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    list.removeAt(i);
+                    setItems(k, 'wo', list);
+                  }),
+            ),
+          FilledButton.icon(
+            icon: const Icon(Icons.add),
+            label: const Text('تسجيل تمرين'),
+            onPressed: () async {
+              final r = await form('تمرين',
+                  ['التمرين', 'العضلة', 'المجموعات', 'العدّات', 'الوزن (كجم)', 'المدة (دقائق)']);
+              if (r == null || r[0].isEmpty) return;
+              list.add({'n': r[0], 'm': r[1], 's': r[2], 'r': r[3], 'w': r[4], 'd': r[5]});
+              setItems(k, 'wo', list);
+            },
+          ),
+        ]),
+      ),
+      box('انتظامك في التمرين',
+          bars({'آخر 7 أيام': days(7) / 7 * 100, 'آخر 30 يوم': days(30) / 30 * 100})),
+    ];
+  }
+
+  double habitPct(Map h) {
+    final ds = List<int>.from(h['d']);
+    var due = 0, ok = 0;
+    for (final x in lastDays(30)) {
+      if (ds.contains(DateTime.parse(x).weekday)) {
+        due++;
+        if ((day(x)['h'] ?? {})[h['n']] == true) ok++;
+      }
+    }
+    return due == 0 ? 0.0 : ok / due * 100;
+  }
+
+  List<Widget> habitsView() {
+    final k = keyOf(DateTime.now());
+    final hs = habits;
+    final done = Map<String, dynamic>.from(day(k)['h'] ?? {});
+    return [
+      box(
+        'عادات اليوم',
+        Column(children: [
+          for (var i = 0; i < hs.length; i++)
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(hs[i]['n']),
+              subtitle: Text('الأيام: ${(hs[i]['d'] as List).length == 7 ? 'يوميا' : (hs[i]['d'] as List).map((d) => dayNames[d - 1]).join('، ')}'),
+              value: done[hs[i]['n']] == true,
+              onChanged: (v) {
+                final nd = day(k);
+                final nh = Map<String, dynamic>.from(nd['h'] ?? {});
+                nh[hs[i]['n']] = v == true;
+                nd['h'] = nh;
+                put(k, nd);
+              },
+              secondary: IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    hs.removeAt(i);
+                    saveHabits(hs);
+                  }),
+            ),
+          FilledButton.icon(
+            icon: const Icon(Icons.add),
+            label: const Text('عادة جديدة'),
+            onPressed: () async {
+              final r = await form('عادة جديدة',
+                  ['الاسم (ماء، مشي، قراءة...)', 'الأيام: أرقام من 1 (الإثنين) إلى 7 (الأحد) مثل 1,4 — اتركه فارغا ليوميا']);
+              if (r == null || r[0].isEmpty) return;
+              var d = r[1].split(',').map((e) => int.tryParse(e.trim())).whereType<int>().where((e) => e >= 1 && e <= 7).toList();
+              if (d.isEmpty) d = [1, 2, 3, 4, 5, 6, 7];
+              hs.add({'n': r[0], 'd': d});
+              saveHabits(hs);
+            },
+          ),
+        ]),
+      ),
+      if (hs.isNotEmpty)
+        box('الالتزام (آخر 30 يوم)', bars({for (final h in hs) h['n'] as String: habitPct(h)})),
+    ];
+  }
+
+  Future<void> importBackup() async {
+    final r = await form('استيراد نسخة احتياطية', ['الصق النص هنا']);
+    if (r == null || r[0].isEmpty) return;
+    try {
+      final o = Map<String, dynamic>.from(jsonDecode(r[0]));
+      final nd = Map<String, dynamic>.from(o['db']);
+      await widget.prefs.setString('db', jsonEncode(nd));
+      await widget.prefs.setString('hb', jsonEncode(o['hb'] ?? []));
+      await widget.prefs.setStringList('sn', List<String>.from(o['sn'] ?? sunnahs));
+      await widget.prefs.setInt('goal', (o['goal'] ?? 5) as int);
+      setState(() => db = nd);
+      toast('تم الاستيراد');
+    } catch (e) {
+      toast('النص غير صالح');
+    }
+  }
+
+  List<Widget> backupView() => [
+        box(
+          'نسخة احتياطية',
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text(
+                'بياناتك محفوظة على جهازك فقط. انسخ النسخة وخزنها في ملاحظاتك أو أرسلها لنفسك قبل تغيير الموبايل أو مسح التطبيق.'),
+            const SizedBox(height: 10),
+            Wrap(spacing: 8, children: [
+              FilledButton.icon(
+                icon: const Icon(Icons.copy),
+                label: const Text('تصدير (نسخ)'),
+                onPressed: () async {
+                  final data = jsonEncode({
+                    'db': db,
+                    'hb': habits,
+                    'sn': sunnahs,
+                    'goal': goal,
+                  });
+                  await Clipboard.setData(ClipboardData(text: data));
+                  toast('تم النسخ. الصقه في مكان آمن.');
+                },
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.paste),
+                label: const Text('استيراد'),
+                onPressed: importBackup,
+              ),
+            ]),
+          ]),
+        ),
+      ];
+
+  Color tone(double v) => v >= 75 ? Colors.green : (v >= 45 ? Colors.orange : Colors.red);
+
+  Widget bars(Map<String, double> m) => Column(children: [
+        for (final e in m.entries)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(children: [
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [Text(e.key), Text('${e.value.round()}%')]),
+              const SizedBox(height: 3),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: LinearProgressIndicator(
+                    value: e.value / 100, minHeight: 9, color: tone(e.value)),
+              ),
+            ]),
+          ),
+      ]);
+
+  Widget box(String title, Widget child) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 10),
+            child,
+          ]),
+        ),
+      );
+
+  Widget stats() {
+    final m = lastDays(30), w = lastDays(14);
+    final cs = Theme.of(context).colorScheme;
+    int sum(List<String> ks, int Function(String) f) => ks.fold(0, (a, k) => a + f(k));
+    double pct(num a, num b) => b == 0 ? 0.0 : (a / b * 100).clamp(0, 100).toDouble();
+    final prayer = {
+      for (final e in prayers.entries)
+        e.value: pct(
+            sum(m, (k) {
+              final v = (day(k)['p'] ?? {})[e.key];
+              return (v == 1 || v == 2) ? 1 : 0;
+            }),
+            30)
+    };
+    final md = m.where((k) {
+      final wd = DateTime.parse(k).weekday;
+      return wd == 1 || wd == 4;
+    }).toList();
+    final cats = <String, double>{
+      'الصلاة': pct(sum(m, pcount), 150),
+      'القرآن': pct(m.where((k) => pages(k) >= goal).length, 30),
+      'السنن': pct(sum(m, scount), 30 * sunnahs.length),
+      'القيام': pct(m.where(qiyam).length, 30),
+      'الصيام': pct(md.where((k) => day(k)['f'] == 1).length, md.length),
+    };
+    final sorted = cats.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    final best = sorted.first, worst = sorted.last;
+    final hasData = db.isNotEmpty && best.value > 0;
+    var maxP = goal.toDouble();
+    for (final k in w) {
+      if (pages(k) > maxP) maxP = pages(k).toDouble();
+    }
+    return ListView(padding: const EdgeInsets.all(12), children: [
+      box(
+        'الصورة العامة (آخر 30 يوم)',
+        SizedBox(
+          height: 250,
+          child: CustomPaint(
+            size: Size.infinite,
+            painter: RadarPainter(cats.values.toList(), cats.keys.toList(), cs.primary,
+                cs.outlineVariant, cs.onSurface),
+          ),
+        ),
+      ),
+      box(
+        'أنت سليم في إيه ومحتاج إيه',
+        hasData
+            ? Column(children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.thumb_up, color: Colors.green),
+                  title: Text('نقطة قوتك: ${best.key} (${best.value.round()}%)'),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.flag, color: Colors.orange),
+                  title: Text('أولى بالاهتمام: ${worst.key} (${worst.value.round()}%)'),
+                  subtitle: const Text('ابدأ بخطوة صغيرة فيه، والمهم الاستمرار مش الكمال.'),
+                ),
+              ])
+            : const Text('سجّل يومين أو أكتر وهتظهر لك نقاط قوتك وضعفك هنا من بياناتك الفعلية.'),
+      ),
+      box('الجوانب (أخضر = ممتاز، برتقالي = متوسط، أحمر = يحتاج اهتمام)', bars(cats)),
+      box('كل صلاة على حدة', bars(prayer)),
+      box(
+        'القرآن: آخر 14 يوم (الأخضر = حققت الهدف)',
+        SizedBox(
+          height: 120,
+          child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            for (final k in w.reversed)
+              Expanded(
+                child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
+                  Text('${pages(k)}', style: const TextStyle(fontSize: 10)),
+                  Container(
+                    height: pages(k) / maxP * 80,
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    decoration: BoxDecoration(
+                      color: pages(k) >= goal ? Colors.green : cs.primary.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ]),
+              ),
+          ]),
+        ),
+      ),
+      box(
+        'سلاسل متتالية',
+        Text('القرآن: ${streak((k) => pages(k) > 0)} يوم · القيام: ${streak(qiyam)} ليلة'),
+      ),
+    ]);
+  }
+}
+
+class RadarPainter extends CustomPainter {
+  final List<double> v;
+  final List<String> l;
+  final Color fill, grid, text;
+  RadarPainter(this.v, this.l, this.fill, this.grid, this.text);
+
+  @override
+  void paint(Canvas c, Size s) {
+    final ctr = Offset(s.width / 2, s.height / 2);
+    final r = s.height / 2 - 34;
+    final n = v.length;
+    Offset pt(int i, double f) {
+      final a = -math.pi / 2 + 2 * math.pi * i / n;
+      return ctr + Offset(math.cos(a), math.sin(a)) * (r * f);
+    }
+
+    final gp = Paint()
+      ..style = PaintingStyle.stroke
+      ..color = grid
+      ..strokeWidth = 1;
+    for (final f in [0.25, 0.5, 0.75, 1.0]) {
+      final p = Path();
+      for (var i = 0; i < n; i++) {
+        final o = pt(i, f);
+        if (i == 0) {
+          p.moveTo(o.dx, o.dy);
+        } else {
+          p.lineTo(o.dx, o.dy);
+        }
+      }
+      p.close();
+      c.drawPath(p, gp);
+    }
+    for (var i = 0; i < n; i++) {
+      c.drawLine(ctr, pt(i, 1), gp);
+    }
+    final p = Path();
+    for (var i = 0; i < n; i++) {
+      final o = pt(i, v[i] / 100);
+      if (i == 0) {
+        p.moveTo(o.dx, o.dy);
+      } else {
+        p.lineTo(o.dx, o.dy);
+      }
+    }
+    p.close();
+    c.drawPath(p, Paint()..color = fill.withOpacity(0.3));
+    c.drawPath(
+        p,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..color = fill
+          ..strokeWidth = 2.5);
+    for (var i = 0; i < n; i++) {
+      final tp = TextPainter(
+        text: TextSpan(text: '${l[i]} ${v[i].round()}%', style: TextStyle(color: text, fontSize: 12)),
+        textDirection: TextDirection.rtl,
+      )..layout();
+      tp.paint(c, pt(i, 1.2) - Offset(tp.width / 2, tp.height / 2));
+    }
+  }
+
+  @override
+  bool shouldRepaint(RadarPainter o) => true;
+}
